@@ -15,8 +15,22 @@ No files leak into the root directory. Each branch is a self-contained folder â€
 
 ## Installation
 
+### From source
+
 ```bash
 cargo install --path .
+```
+
+### From GitHub Releases
+
+Pre-built binaries are available on the [Releases page](https://github.com/kazuoteramoto/git-wt/releases).
+Download the binary for your platform, rename it to `git-wt`, and make it executable:
+
+```bash
+# Example for macOS ARM (Apple Silicon)
+curl -L -o git-wt https://github.com/kazuoteramoto/git-wt/releases/latest/download/git-wt-aarch64-apple-darwin
+chmod +x git-wt
+sudo mv git-wt /usr/local/bin/
 ```
 
 The binary is named `git-wt`. Git automatically discovers it as `git wt`.

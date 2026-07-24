@@ -7,6 +7,9 @@ edition = "2021"
 name = "git-wt"
 path = "src/main.rs"
 
+[profile.release]
+lto = "thin"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 git2 = "0.21"
