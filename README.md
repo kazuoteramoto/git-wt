@@ -11,7 +11,13 @@ myproject/
 └── ...
 ```
 
-No files leak into the root directory. Each branch is a self-contained folder — you can open multiple terminals, run different branches, compare code side-by-side, or run tests in one branch while reviewing PRs in another.
+## Use Cases
+
+- **Hotfix without stashing** — Ship an urgent fix in its own worktree without disturbing your WIP.
+- **Review PRs side-by-side** — Check out a PR branch into its own folder and compare code next to `main`.
+- **Run long tasks while you keep coding** — Build, test, or watch in one worktree while you continue editing in another.
+- **Parallel feature work** — Work on multiple features at the same time, each in its own self-contained folder.
+- **Clean branch lifecycle** — `git wt add` to start, `git wt rm` to clean up the branch, worktree, and directory in one step.
 
 ## Installation
 
