@@ -1,0 +1,87 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: git-wt-darwin-arm64
+            target-cpu: apple-m1
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: git-wt-linux-amd64
+            target-cpu: x86-64-v3
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            artifact: git-wt-linux-arm64
+            target-cpu: neoverse-n1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          RUSTFLAGS: "-C codegen-units=1 -C target-cpu=${{ matrix.target-cpu }}"
+
+      - name: Strip debug symbols
+        run: strip target/${{ matrix.target }}/release/git-wt
+
+      - name: Rename binary for platform
+        run: cp target/${{ matrix.target }}/release/git-wt ./${{ matrix.artifact }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Publish nightly release
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: git-wt-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: Verify artifacts
+        run: ls -la artifacts/
+
+      - name: Create/Update nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Nightly"
+          tag_name: "nightly"
+          body: "Latest build from `main` — auto-updated on every push."
+          prerelease: true
+          files: artifacts/*
