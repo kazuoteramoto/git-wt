@@ -9,6 +9,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Convert an existing repo to a branch-as-a-folder layout
+    Convert,
     /// Clone a repository into a worktree-managed layout
     Clone {
         /// Remote URL to clone from

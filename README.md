@@ -66,6 +66,18 @@ This makes the root a natural "control center" for the whole project — do admi
 
 ## Commands
 
+### `git wt convert`
+
+Convert an existing plain git repo to the branch-as-a-folder layout in-place.
+
+```bash
+cd my-existing-repo
+git wt convert
+# → .git stays at root, all files move into main/
+```
+
+The working tree must be clean (no uncommitted changes). The checkout directory is named after the current branch. Refuses if already converted, bare, on a detached HEAD, or inside a linked worktree.
+
 ### `git wt clone <url> [<dir>] [-- <git-clone-flags>]`
 
 Clone a repository into a worktree-managed layout.

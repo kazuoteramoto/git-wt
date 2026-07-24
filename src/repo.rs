@@ -90,6 +90,18 @@ pub fn remote_callbacks() -> RemoteCallbacks<'static> {
     cb
 }
 
+/// Check whether the working tree has uncommitted changes.
+pub fn is_working_tree_dirty(repo: &Repository) -> bool {
+    repo.statuses(Some(
+        git2::StatusOptions::new()
+            .include_untracked(true)
+            .include_ignored(false),
+    ))
+    .map(|s| !s.is_empty())
+    .unwrap_or(true) // treat errors as dirty (safe for guards)
+}
+/// Branch names with / (e.g. feat/test) would create nested directories
+/// under .git/worktrees/ that git can't enumerate, so replace / with -.
 /// Derive a flat worktree name from a branch name.
 /// Branch names with / (e.g. feat/test) would create nested directories
 /// under .git/worktrees/ that git can't enumerate, so replace / with -.

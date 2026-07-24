@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use git2::{Repository, StatusOptions};
+use git2::Repository;
 use std::io::IsTerminal;
 
 use crate::repo;
@@ -214,12 +214,9 @@ fn short_sha_str(repo: &Repository, full_sha: &str) -> String {
 
 /// Check if a worktree has uncommitted changes. Returns (is_dirty, status_label).
 fn dirty_status(repo: &Repository) -> (bool, &'static str) {
-    match repo.statuses(Some(
-        StatusOptions::new()
-            .include_untracked(true)
-            .include_ignored(false),
-    )) {
-        Ok(statuses) if !statuses.is_empty() => (true, "dirty"),
-        _ => (false, "clean"),
+    if repo::is_working_tree_dirty(repo) {
+        (true, "dirty")
+    } else {
+        (false, "clean")
     }
 }
