@@ -71,11 +71,12 @@ fn clone_with_separate_git_dir(
             .default_branch()
             .context("failed to determine default branch from origin — remote may be empty")?;
 
-        default_branch_buf
+        let default_branch_str = default_branch_buf
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("default branch name is not valid UTF-8"))?
+            .context("default branch name is not valid UTF-8")?;
+        default_branch_str
             .strip_prefix("refs/heads/")
-            .unwrap_or(default_branch_buf.as_str().unwrap_or("main"))
+            .unwrap_or(default_branch_str)
             .to_string()
     };
 

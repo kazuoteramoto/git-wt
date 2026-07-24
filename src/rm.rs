@@ -9,7 +9,7 @@ pub fn run(branch: &str, force: bool) -> Result<()> {
     // 1. Protect primary checkout from removal
     if !repo.is_bare() {
         if let Ok(head) = repo.head() {
-            if let Some(head_branch) = head.shorthand() {
+            if let Ok(head_branch) = head.shorthand() {
                 if head_branch == branch {
                     bail!(
                         "cannot remove '{}' — it is the primary checkout (HEAD).\n\

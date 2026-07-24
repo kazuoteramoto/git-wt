@@ -37,6 +37,7 @@ pub fn cached_default_branch(repo: &Repository) -> Result<String> {
 
     let target = head_ref
         .symbolic_target()
+        .context("failed to read remote HEAD target")?
         .context("remote HEAD is not a symbolic reference")?;
 
     let branch = target

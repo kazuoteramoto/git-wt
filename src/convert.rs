@@ -62,7 +62,7 @@ pub fn run() -> Result<()> {
         .map(|e| e.path())
         .filter(|p| {
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            name != ".git" && name != &branch
+            name != ".git" && name != branch
         })
         .collect();
 

@@ -9,5 +9,5 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-git2 = "0.20"
+git2 = "0.21"
 anyhow = "1"

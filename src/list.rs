@@ -27,7 +27,7 @@ pub fn run(verbose: bool, color_flag: &str) -> Result<()> {
                 let name = wt_repo
                     .head()
                     .ok()
-                    .and_then(|h| h.shorthand().map(|s| s.to_string()))
+                    .and_then(|h| h.shorthand().ok().map(|s| s.to_string()))
                     .unwrap_or_else(|| "(unknown)".to_string());
                 let path = workdir
                     .strip_prefix(base)
@@ -46,14 +46,15 @@ pub fn run(verbose: bool, color_flag: &str) -> Result<()> {
     // Linked worktrees
     let worktree_names = repo.worktrees().context("failed to list worktrees")?;
     for wt_name in worktree_names.iter() {
-        let wt_name = wt_name.context("invalid worktree name")?;
+        let wt_name_opt = wt_name.context("invalid worktree name")?;
+        let wt_name = wt_name_opt.context("worktree has no name")?;
         if let Ok(wt) = repo.find_worktree(wt_name) {
             if let Ok(wt_repo) = Repository::open_from_worktree(&wt) {
                 // Use branch name from HEAD (may differ from worktree name, e.g. feat/test → feat-test)
                 let name = wt_repo
                     .head()
                     .ok()
-                    .and_then(|h| h.shorthand().map(|s| s.to_string()))
+                    .and_then(|h| h.shorthand().ok().map(|s| s.to_string()))
                     .unwrap_or_else(|| wt_name.to_string());
                 let path = wt.path()
                     .strip_prefix(base)
@@ -171,7 +172,7 @@ fn color_enabled(repo: &Repository, flag: &str) -> bool {
 fn detect_current_branch() -> Option<String> {
     let repo = Repository::discover(".").ok()?;
     let head = repo.head().ok()?;
-    let branch = head.shorthand().map(|s| s.to_string());
+    let branch = head.shorthand().ok().map(|s| s.to_string());
     branch
 }
 
@@ -188,7 +189,7 @@ fn head_info(repo: &Repository) -> (String, String) {
     let message = head
         .peel_to_commit()
         .ok()
-        .and_then(|c| c.summary().map(|s| s.to_string()))
+        .and_then(|c| c.summary().ok().flatten().map(|s| s.to_string()))
         .unwrap_or_else(|| "(no commits)".to_string());
     (sha, message)
 }
@@ -207,7 +208,7 @@ fn short_sha_str(repo: &Repository, full_sha: &str) -> String {
         .and_then(|obj| {
             obj.short_id()
                 .ok()
-                .and_then(|b| b.as_str().map(|s| s.to_string()))
+                .and_then(|b| b.as_str().ok().map(|s| s.to_string()))
         })
         .unwrap_or_else(|| full_sha[..7].to_string())
 }
