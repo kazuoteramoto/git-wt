@@ -82,11 +82,62 @@ pub fn extract_flag_value<'a>(args: &[&'a str], flag_names: &[&str]) -> Option<&
     None
 }
 
-/// Create remote callbacks with SSH agent authentication.
+/// Try to load an SSH key from the standard default paths.
+///
+/// Probes `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa` in order, matching
+/// OpenSSH's priority.  Returns `None` when no key file exists or the
+/// file can't be loaded (e.g. encrypted with a passphrase).
+fn try_default_ssh_key(user: &str, home: &str) -> Option<Cred> {
+    for key_name in &["id_ed25519", "id_ecdsa", "id_rsa"] {
+        let key_path = std::path::PathBuf::from(home)
+            .join(".ssh")
+            .join(key_name);
+        if key_path.exists() {
+            if let Ok(cred) = Cred::ssh_key(user, None, &key_path, None) {
+                return Some(cred);
+            }
+        }
+    }
+    None
+}
+
+/// Create remote callbacks with SSH authentication.
+///
+/// First tries the SSH agent (`ssh-add -l`). If that fails (e.g. no agent
+/// running), falls back to probing default key files: `~/.ssh/id_ed25519`,
+/// `~/.ssh/id_ecdsa`, `~/.ssh/id_rsa`.
 pub fn remote_callbacks() -> RemoteCallbacks<'static> {
     let mut cb = RemoteCallbacks::new();
-    cb.credentials(|_url, username, _allowed| {
-        Cred::ssh_key_from_agent(username.unwrap_or("git"))
+    let mut tried_agent = false;
+    cb.credentials(move |_url, username, allowed| {
+        let user = username.unwrap_or("git");
+
+        // Only try the agent once — if it fails, move on.
+        if !tried_agent {
+            tried_agent = true;
+            return Cred::ssh_key_from_agent(user);
+        }
+
+        // Agent failed (or no agent running).  Probe default key files,
+        // matching the order that OpenSSH uses.
+        if allowed.contains(git2::CredentialType::SSH_KEY) {
+            let home = match std::env::var("HOME") {
+                Ok(h) => h,
+                Err(_) => {
+                    return Err(git2::Error::new(
+                        git2::ErrorCode::Auth,
+                        git2::ErrorClass::Ssh,
+                        "HOME environment variable not set — cannot locate SSH keys",
+                    ));
+                }
+            };
+            if let Some(cred) = try_default_ssh_key(user, &home) {
+                return Ok(cred);
+            }
+        }
+
+        // Nothing worked — let libgit2 produce a descriptive error.
+        Cred::ssh_key_from_agent(user)
     });
     cb
 }
