@@ -13,5 +13,5 @@ lto = "thin"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-git2 = { version = "0.21", features = ["ssh"] }
+git2 = { version = "0.21", features = ["ssh", "https"] }
 anyhow = "1"
