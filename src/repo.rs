@@ -29,23 +29,45 @@ pub fn base_dir(repo: &Repository) -> &Path {
 
 /// Determine the default branch from the locally-cached remote HEAD symref.
 /// No network access — the symref is set during clone/fetch.
+///
+/// Tries `origin` first (standard git convention), then falls back to any
+/// `refs/remotes/*/HEAD` reference to support custom remote names
+/// (e.g. `git wt clone -- --origin upstream <url>`).
 pub fn cached_default_branch(repo: &Repository) -> Result<String> {
-    // Read refs/remotes/origin/HEAD → points to e.g. refs/remotes/origin/main
-    let head_ref = repo
-        .find_reference("refs/remotes/origin/HEAD")
-        .context("no cached remote HEAD — fetch from origin first")?;
+    // Try origin first — deterministic, matches git convention
+    if let Ok(head_ref) = repo.find_reference("refs/remotes/origin/HEAD") {
+        if let Ok(Some(target)) = head_ref.symbolic_target() {
+            let branch = target
+                .strip_prefix("refs/remotes/origin/")
+                .unwrap_or(&target)
+                .to_string();
+            return Ok(branch);
+        }
+    }
 
-    let target = head_ref
-        .symbolic_target()
-        .context("failed to read remote HEAD target")?
-        .context("remote HEAD is not a symbolic reference")?;
+    // Fallback: enumerate any remote HEAD (for custom --origin names)
+    let mut refs = repo
+        .references_glob("refs/remotes/*/HEAD")
+        .context("failed to enumerate remote references")?;
 
-    let branch = target
-        .strip_prefix("refs/remotes/origin/")
-        .unwrap_or(target)
-        .to_string();
+    for head_ref_result in &mut refs {
+        let head_ref = head_ref_result.context("failed to iterate remote references")?;
+        if let Ok(Some(target)) = head_ref.symbolic_target() {
+            // Derive the prefix from the HEAD ref name:
+            //   "refs/remotes/upstream/HEAD" → "refs/remotes/upstream/"
+            // Then strip it from the target to get the branch name, which
+            // correctly handles nested names like "feature/foo".
+            let head_name = head_ref.name().unwrap_or("");
+            let remote_prefix = head_name.strip_suffix("HEAD").unwrap_or(head_name);
+            let branch = target
+                .strip_prefix(remote_prefix)
+                .unwrap_or(&target)
+                .to_string();
+            return Ok(branch);
+        }
+    }
 
-    Ok(branch)
+    anyhow::bail!("cannot determine default branch — no remote HEAD found")
 }
 
 /// Fallback: try common default branch names locally.
@@ -55,7 +77,7 @@ pub fn default_branch_local(repo: &Repository) -> Result<String> {
             return Ok(name.to_string());
         }
     }
-    anyhow::bail!("cannot determine default branch — no 'main', 'master', or origin HEAD found")
+    anyhow::bail!("cannot determine default branch — no 'main', 'master', or remote HEAD found")
 }
 
 /// Normalize pass-through git flags: filter out bare `--` separators.

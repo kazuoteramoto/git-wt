@@ -25,8 +25,16 @@ pub fn run(url: &str, dir: Option<&str>, git_flags: &[String]) -> Result<()> {
     let target_branch = repo::extract_flag_value(&git_flags, &["--branch", "-b"]);
     let depth =
         repo::extract_flag_value(&git_flags, &["--depth"]).and_then(|v| v.parse::<i32>().ok());
+    let remote_name = repo::extract_flag_value(&git_flags, &["--origin", "-o"])
+        .unwrap_or("origin");
 
-    clone_with_separate_git_dir(url, &base_dir, target_branch.map(String::from), depth)?;
+    clone_with_separate_git_dir(
+        url,
+        &base_dir,
+        target_branch.map(String::from),
+        depth,
+        remote_name,
+    )?;
 
     eprintln!("Cloned into {}", base_dir.display());
     Ok(())
@@ -37,6 +45,7 @@ fn clone_with_separate_git_dir(
     base_dir: &Path,
     target_branch: Option<String>,
     depth: Option<i32>,
+    remote_name: &str,
 ) -> Result<()> {
     std::fs::create_dir_all(base_dir)
         .with_context(|| format!("failed to create directory '{}'", base_dir.display()))?;
@@ -52,8 +61,8 @@ fn clone_with_separate_git_dir(
     // then get the default branch from the still-connected remote.
     let fetched_default_branch = {
         let mut remote = repo
-            .remote("origin", url)
-            .with_context(|| format!("failed to add remote 'origin' at '{}'", url))?;
+            .remote(remote_name, url)
+            .with_context(|| format!("failed to add remote '{}' at '{}'", remote_name, url))?;
 
         let mut fetch_opts = FetchOptions::new();
         fetch_opts.remote_callbacks(repo::remote_callbacks());
@@ -61,15 +70,15 @@ fn clone_with_separate_git_dir(
             fetch_opts.depth(d);
         }
 
-        let refspec = "refs/heads/*:refs/remotes/origin/*";
+        let refspec = format!("refs/heads/*:refs/remotes/{remote_name}/*");
         remote
-            .fetch(&[refspec], Some(&mut fetch_opts), None)
+            .fetch(&[&refspec], Some(&mut fetch_opts), None)
             .with_context(|| format!("failed to fetch from '{}'", url))?;
 
         // Remote is still connected after fetch — get default branch
         let default_branch_buf = remote
             .default_branch()
-            .context("failed to determine default branch from origin — remote may be empty")?;
+            .context("failed to determine default branch from remote — remote may be empty")?;
 
         let default_branch_str = default_branch_buf
             .as_str()
@@ -82,8 +91,8 @@ fn clone_with_separate_git_dir(
 
     let effective_branch = target_branch.as_deref().unwrap_or(&fetched_default_branch);
 
-    let remote_ref_name = format!("refs/remotes/origin/{}", effective_branch);
-    let remote_ref = repo
+    let remote_ref_name = remote_ref(remote_name, effective_branch);
+    let fetched_ref = repo
         .find_reference(&remote_ref_name)
         .with_context(|| {
             format!(
@@ -92,12 +101,15 @@ fn clone_with_separate_git_dir(
             )
         })?;
 
-    let commit = remote_ref
+    let commit = fetched_ref
         .peel_to_commit()
         .context("failed to resolve remote branch to commit")?;
 
-    repo.branch(effective_branch, &commit, false)
+    let mut branch = repo.branch(effective_branch, &commit, false)
         .with_context(|| format!("failed to create local branch '{}'", effective_branch))?;
+    branch
+        .set_upstream(Some(&format!("{remote_name}/{effective_branch}")))
+        .with_context(|| format!("failed to set upstream tracking for '{}'", effective_branch))?;
 
     let worktree_path = base_dir.join(effective_branch);
     std::fs::create_dir_all(&worktree_path)
@@ -114,11 +126,11 @@ fn clone_with_separate_git_dir(
     repo.checkout_head(Some(&mut checkout_opts))
         .with_context(|| "failed to checkout working tree")?;
 
-    // Create refs/remotes/origin/HEAD symref so default_branch_remote()
+    // Create refs/remotes/<remote>/HEAD symref so cached_default_branch()
     // can resolve it locally (for rm merge checks, etc.)
     repo.reference_symbolic(
-        "refs/remotes/origin/HEAD",
-        &format!("refs/remotes/origin/{}", effective_branch),
+        &remote_ref(remote_name, "HEAD"),
+        &remote_ref(remote_name, effective_branch),
         true,
         "git wt clone",
     )
@@ -126,6 +138,11 @@ fn clone_with_separate_git_dir(
 
     eprintln!("Default branch: {}", effective_branch);
     Ok(())
+}
+
+/// Build a remote-tracking ref path: `refs/remotes/<remote>/<name>`.
+fn remote_ref(remote: &str, name: &str) -> String {
+    format!("refs/remotes/{}/{}", remote, name)
 }
 
 fn determine_base_dir(url: &str, dir: Option<&str>) -> Result<PathBuf> {
