@@ -1,5 +1,9 @@
 use anyhow::{bail, Context, Result};
-use git2::{build::CheckoutBuilder, FetchOptions, Repository, RepositoryInitOptions};
+use git2::{
+    build::CheckoutBuilder, FetchOptions, RemoteCallbacks, Repository,
+    RepositoryInitOptions,
+};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use crate::repo;
@@ -65,7 +69,7 @@ fn clone_with_separate_git_dir(
             .with_context(|| format!("failed to add remote '{}' at '{}'", remote_name, url))?;
 
         let mut fetch_opts = FetchOptions::new();
-        fetch_opts.remote_callbacks(repo::remote_callbacks());
+        fetch_opts.remote_callbacks(clone_remote_callbacks());
         if let Some(d) = depth {
             fetch_opts.depth(d);
         }
@@ -155,4 +159,97 @@ fn determine_base_dir(url: &str, dir: Option<&str>) -> Result<PathBuf> {
         bail!("could not determine directory name from URL '{}' — specify a directory", url);
     }
     Ok(PathBuf::from(basename))
+}
+
+/// Render one fetch-progress update, or `None` when nothing should be printed.
+fn fetch_progress_line(
+    received: usize,
+    total: usize,
+    bytes: usize,
+    idx_deltas: usize,
+    tot_deltas: usize,
+) -> Option<String> {
+    if total == 0 {
+        return None;
+    }
+    if received < total {
+        let pct = received * 100 / total;
+        return Some(format!(
+            "\rReceiving objects: {}% ({}/{total}), {:.1} MiB",
+            pct,
+            received,
+            bytes as f64 / (1024.0 * 1024.0)
+        ));
+    }
+    if tot_deltas > 0 && idx_deltas < tot_deltas {
+        let pct = idx_deltas * 100 / tot_deltas;
+        return Some(format!(
+            "\rResolving deltas: {}% ({idx_deltas}/{tot_deltas})",
+            pct
+        ));
+    }
+    Some(", done.".to_string())
+}
+
+fn clone_remote_callbacks() -> RemoteCallbacks<'static> {
+    let mut cb = repo::remote_callbacks();
+    let tty = std::io::stderr().is_terminal();
+    let mut finished = false;
+    cb.transfer_progress(move |p| {
+        if tty && !finished {
+            if let Some(line) = fetch_progress_line(
+                p.received_objects() as usize,
+                p.total_objects() as usize,
+                p.received_bytes(),
+                p.indexed_deltas() as usize,
+                p.total_deltas() as usize,
+            ) {
+                eprint!("{line}");
+                if line == ", done." {
+                    finished = true;
+                }
+            }
+        }
+        true
+    });
+    cb.sideband_progress(move |data| {
+        if tty {
+            eprint!("\rremote: {}", String::from_utf8_lossy(data));
+        }
+        true
+    });
+    cb
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fetch_progress_line;
+
+    #[test]
+    fn empty_repo_is_silent() {
+        assert_eq!(fetch_progress_line(0, 0, 0, 0, 0), None);
+    }
+
+    #[test]
+    fn receiving_objects() {
+        let line = fetch_progress_line(50, 100, 5_242_880, 0, 0).unwrap();
+        assert!(line.contains("Receiving objects: 50% (50/100)"));
+        assert!(line.contains("5.0 MiB"));
+    }
+
+    #[test]
+    fn resolving_deltas() {
+        let line = fetch_progress_line(100, 100, 0, 5, 10).unwrap();
+        assert!(line.contains("Resolving deltas: 50% (5/10)"));
+    }
+
+    #[test]
+    fn done_no_deltas() {
+        assert_eq!(fetch_progress_line(100, 100, 0, 0, 0).unwrap(), ", done.");
+    }
+
+    #[test]
+    fn done_after_deltas() {
+        assert_eq!(fetch_progress_line(100, 100, 0, 10, 10).unwrap(), ", done.");
+    }
 }
