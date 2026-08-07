@@ -1,44 +1,26 @@
 use anyhow::{bail, Context, Result};
 use git2::{
-    build::CheckoutBuilder, FetchOptions, RemoteCallbacks, Repository,
-    RepositoryInitOptions,
+    build::CheckoutBuilder, FetchOptions, RemoteCallbacks, Repository, RepositoryInitOptions,
 };
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-use crate::repo;
+use crate::ssh;
 
-pub fn run(url: &str, dir: Option<&str>, git_flags: &[String]) -> Result<()> {
-    let git_flags = repo::normalize_flags(git_flags);
-
-    for flag in &git_flags {
-        match *flag {
-            "--bare" | "--separate-git-dir" | "--no-checkout" => {
-                bail!("flag '{}' is not compatible with git wt clone", flag);
-            }
-            _ => {}
-        }
-    }
-
+pub fn run(
+    url: &str,
+    dir: Option<&str>,
+    branch: Option<&str>,
+    depth: Option<i32>,
+    remote_name: &str,
+) -> Result<()> {
     let base_dir = determine_base_dir(url, dir)?;
 
     if base_dir.exists() {
         bail!("destination '{}' already exists", base_dir.display());
     }
 
-    let target_branch = repo::extract_flag_value(&git_flags, &["--branch", "-b"]);
-    let depth =
-        repo::extract_flag_value(&git_flags, &["--depth"]).and_then(|v| v.parse::<i32>().ok());
-    let remote_name = repo::extract_flag_value(&git_flags, &["--origin", "-o"])
-        .unwrap_or("origin");
-
-    clone_with_separate_git_dir(
-        url,
-        &base_dir,
-        target_branch.map(String::from),
-        depth,
-        remote_name,
-    )?;
+    clone_with_separate_git_dir(url, &base_dir, branch.map(String::from), depth, remote_name)?;
 
     eprintln!("Cloned into {}", base_dir.display());
     Ok(())
@@ -70,6 +52,8 @@ fn clone_with_separate_git_dir(
 
         let mut fetch_opts = FetchOptions::new();
         fetch_opts.remote_callbacks(clone_remote_callbacks());
+        // git clone follows tags by default — match that
+        fetch_opts.download_tags(git2::AutotagOption::Auto);
         if let Some(d) = depth {
             fetch_opts.depth(d);
         }
@@ -80,36 +64,45 @@ fn clone_with_separate_git_dir(
             .with_context(|| format!("failed to fetch from '{}'", url))?;
 
         // Remote is still connected after fetch — get default branch
-        let default_branch_buf = remote
+        remote
             .default_branch()
-            .context("failed to determine default branch from remote — remote may be empty")?;
-
-        let default_branch_str = default_branch_buf
-            .as_str()
-            .context("default branch name is not valid UTF-8")?;
-        default_branch_str
-            .strip_prefix("refs/heads/")
-            .unwrap_or(default_branch_str)
-            .to_string()
+            .ok()
+            .and_then(|buf| buf.as_str().ok().map(str::to_string))
+            .map(|s| s.strip_prefix("refs/heads/").unwrap_or(&s).to_string())
     };
+
+    // Empty remote (no branch refs fetched) → unborn-HEAD layout like
+    // `git clone` on an empty repository
+    let has_remote_refs = repo
+        .references_glob(&format!("refs/remotes/{remote_name}/*"))
+        .ok()
+        .map(|mut it| it.next().is_some())
+        .unwrap_or(false);
+    if !has_remote_refs {
+        let default = fetched_default_branch.unwrap_or_else(|| "main".to_string());
+        empty_clone(&repo, base_dir, remote_name, &default)?;
+        return Ok(());
+    }
+
+    let fetched_default_branch =
+        fetched_default_branch.context("failed to determine default branch from remote")?;
 
     let effective_branch = target_branch.as_deref().unwrap_or(&fetched_default_branch);
 
     let remote_ref_name = remote_ref(remote_name, effective_branch);
-    let fetched_ref = repo
-        .find_reference(&remote_ref_name)
-        .with_context(|| {
-            format!(
-                "remote branch '{}' not found — was '{}' fetched?",
-                effective_branch, effective_branch
-            )
-        })?;
+    let fetched_ref = repo.find_reference(&remote_ref_name).with_context(|| {
+        format!(
+            "remote branch '{}' not found — was '{}' fetched?",
+            effective_branch, effective_branch
+        )
+    })?;
 
     let commit = fetched_ref
         .peel_to_commit()
         .context("failed to resolve remote branch to commit")?;
 
-    let mut branch = repo.branch(effective_branch, &commit, false)
+    let mut branch = repo
+        .branch(effective_branch, &commit, false)
         .with_context(|| format!("failed to create local branch '{}'", effective_branch))?;
     branch
         .set_upstream(Some(&format!("{remote_name}/{effective_branch}")))
@@ -131,16 +124,43 @@ fn clone_with_separate_git_dir(
         .with_context(|| "failed to checkout working tree")?;
 
     // Create refs/remotes/<remote>/HEAD symref so cached_default_branch()
-    // can resolve it locally (for rm merge checks, etc.)
+    // can resolve it locally (for rm merge checks, etc.). Points at the
+    // remote's actual default branch — like git clone, independent of -b.
     repo.reference_symbolic(
         &remote_ref(remote_name, "HEAD"),
-        &remote_ref(remote_name, effective_branch),
+        &remote_ref(remote_name, &fetched_default_branch),
         true,
         "git wt clone",
     )
     .context("failed to set remote HEAD reference")?;
 
     eprintln!("Default branch: {}", effective_branch);
+    Ok(())
+}
+
+/// Empty remote: create the layout with an unborn HEAD on the default
+/// branch, like `git clone` on an empty repository. No checkout — the
+/// user's first commit populates the worktree.
+fn empty_clone(
+    repo: &git2::Repository,
+    base_dir: &Path,
+    remote_name: &str,
+    default_branch: &str,
+) -> Result<()> {
+    let worktree_path = base_dir.join(default_branch);
+    std::fs::create_dir_all(&worktree_path)
+        .with_context(|| format!("failed to create directory '{}'", worktree_path.display()))?;
+
+    repo.set_workdir(&worktree_path, true)
+        .with_context(|| format!("failed to set workdir to '{}'", worktree_path.display()))?;
+    repo.set_head(&format!("refs/heads/{}", default_branch))
+        .with_context(|| format!("failed to set HEAD to '{}'", default_branch))?;
+
+    eprintln!("Default branch: {} (unborn)", default_branch);
+    eprintln!(
+        "Warning: remote '{}' appears to be empty — no commits to check out",
+        remote_name
+    );
     Ok(())
 }
 
@@ -156,7 +176,10 @@ fn determine_base_dir(url: &str, dir: Option<&str>) -> Result<PathBuf> {
     let name = url.trim_end_matches('/').trim_end_matches(".git");
     let basename = name.rsplit('/').next().unwrap_or(name);
     if basename.is_empty() {
-        bail!("could not determine directory name from URL '{}' — specify a directory", url);
+        bail!(
+            "could not determine directory name from URL '{}' — specify a directory",
+            url
+        );
     }
     Ok(PathBuf::from(basename))
 }
@@ -192,7 +215,7 @@ fn fetch_progress_line(
 }
 
 fn clone_remote_callbacks() -> RemoteCallbacks<'static> {
-    let mut cb = repo::remote_callbacks();
+    let mut cb = ssh::remote_callbacks();
     let tty = std::io::stderr().is_terminal();
     let mut finished = false;
     cb.transfer_progress(move |p| {

@@ -15,3 +15,9 @@ lto = "thin"
 clap = { version = "4", features = ["derive"] }
 git2 = { version = "0.21", features = ["ssh", "https"] }
 anyhow = "1"
+rpassword = "7"
+ssh-key = { version = "0.6", features = ["encryption", "ed25519", "rsa", "ecdsa"] }
+owo-colors = "4"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,7 +1,11 @@
-use clap::{Parser, Subcommand};
+use clap::{ColorChoice, Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "wt", version, about = "Manage git worktrees with a branch-as-a-folder layout")]
+#[command(
+    name = "wt",
+    version,
+    about = "Manage git worktrees with a branch-as-a-folder layout"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -17,9 +21,15 @@ pub enum Commands {
         url: String,
         /// Target directory (defaults to repo name derived from URL)
         dir: Option<String>,
-        /// Extra flags forwarded to git clone (everything after --)
-        #[arg(last = true)]
-        git_flags: Vec<String>,
+        /// Branch to check out (defaults to the remote's default branch)
+        #[arg(short = 'b', long = "branch")]
+        branch: Option<String>,
+        /// Create a shallow clone with this many commits of history
+        #[arg(long = "depth")]
+        depth: Option<i32>,
+        /// Name of the remote (defaults to origin)
+        #[arg(short = 'o', long = "origin")]
+        origin: Option<String>,
     },
     /// Add a new worktree for the given branch
     Add {
@@ -37,13 +47,13 @@ pub enum Commands {
         #[arg(short = 'f', long = "force")]
         force: bool,
     },
-    /// List worktrees (format matches git branch -v)
+    /// List worktrees (format in the style of git branch -v)
     List {
         /// Show path and status columns
         #[arg(short = 'v', long = "verbose")]
         verbose: bool,
         /// When to use colors: always, never, or auto
-        #[arg(long = "color", default_value = "auto")]
-        color: String,
+        #[arg(long = "color", value_enum, default_value = "auto")]
+        color: ColorChoice,
     },
 }

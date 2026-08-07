@@ -34,7 +34,7 @@ Download the binary for your platform, rename it to `git-wt`, and make it execut
 
 ```bash
 # Example for macOS ARM (Apple Silicon)
-curl -L -o git-wt https://github.com/kazuoteramoto/git-wt/releases/latest/download/git-wt-aarch64-apple-darwin
+curl -L -o git-wt https://github.com/kazuoteramoto/git-wt/releases/latest/download/git-wt-darwin-arm64
 chmod +x git-wt
 sudo mv git-wt /usr/local/bin/
 ```
@@ -98,19 +98,19 @@ git wt convert
 
 The working tree must be clean (no uncommitted changes). The checkout directory is named after the current branch. Refuses if already converted, bare, on a detached HEAD, or inside a linked worktree.
 
-### `git wt clone <url> [<dir>] [-- <git-clone-flags>]`
+### `git wt clone <url> [<dir>] [-b <branch>] [--depth <n>] [-o <name>]`
 
 Clone a repository into a worktree-managed layout.
 
 ```bash
 git wt clone https://github.com/user/repo.git
 git wt clone https://github.com/user/repo.git my-fork
-git wt clone https://github.com/user/repo.git -- --depth 1 --branch develop
+git wt clone https://github.com/user/repo.git --depth 1 -b develop
 ```
 
-Creates `dir/{.git, <default-branch>/}`. The default branch is detected automatically.
+Creates `dir/{.git, <default-branch>/}`. The default branch is detected automatically; `-b` checks out another branch, `--depth` makes a shallow clone, `-o` names the remote (default `origin`). Unknown flags are rejected with an error — other `git clone` flags are not supported. Note that unlike `git clone`, `--depth` still fetches all branches (not just the default one); tags are fetched as with `git clone`.
 
-Flags `--bare`, `--separate-git-dir`, and `--no-checkout` are rejected (they conflict with the layout).
+For SSH URLs, authentication tries the ssh-agent first, then the default key files. A passphrase-protected key prompts interactively (hidden input, up to 3 attempts) — no flags needed.
 
 ### `git wt add <branch> [-p|--print-path]`
 
@@ -132,11 +132,11 @@ git wt rm my-feature              # blocks if branch has unmerged commits
 git wt rm -f my-feature           # force deletion even if unmerged
 ```
 
-Refuses to remove the primary checkout. Checks merge status against the remote's default branch (falls back to local `main` or `master` if no remote HEAD is cached).
+Refuses to remove the primary checkout. Refuses unclean worktrees (modified or untracked files) unless `-f` is used, like `git worktree remove`. Checks merge status against the remote's default branch (falls back to local `main` or `master` if no remote HEAD is cached). Locked worktrees must be unlocked with `git worktree unlock` first.
 
 ### `git wt list [-v|--verbose] [--color=auto|always|never]`
 
-List all worktrees in a format matching `git branch -v`. Space-aligned columns.
+List all worktrees in a format in the style of `git branch -v`. Space-aligned columns.
 
 ```bash
 git wt list
@@ -148,7 +148,7 @@ git wt list -v                        # adds path and status columns
 #    feature a1b2c3d  WIP: awesome stuff feature/  dirty
 ```
 
-The `*` marks the worktree you're currently inside. Colors match `git branch -v` (* and current branch green, SHA yellow, dirty red, clean green). Respects `color.ui` and `color.wt` git config. Use `--color=never` to disable, `--color=always` to force.
+The `*` marks the worktree you're currently inside. Colors are in the style of `git branch -v`: current branch green, SHA yellow, dirty red, clean green (git itself colors only branch names). Respects `color.ui` and `color.wt` git config. Use `--color=never` to disable, `--color=always` to force.
 
 ## Shell Alias
 
@@ -174,3 +174,9 @@ Then `gwt my-feature` creates the worktree AND switches you into it.
 - **Visibility** — `git wt list` shows you all worktrees with dirty status and last commit, not just paths.
 - **Safety** — `git wt rm` checks if your branch is merged before deleting it.
 - **Root as control center** — run `git status`, `git fetch`, `git branch` from the project root without needing to `cd` into a worktree first.
+
+## Limitations
+
+- **SSH keys** — `git wt clone` over SSH tries the ssh-agent first, then falls back to the default key files (`~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`). Passphrase-protected keys work: they prompt interactively, with 3 attempts like ssh. Keys configured via `ssh_config` (`IdentityFile`) or custom paths are not supported; prompt input requires a terminal.
+- **Empty remotes** — cloning an empty repository creates the layout with an unborn default branch; the worktree is populated by your first commit.
+- **Locked worktrees** — `git wt rm` cannot remove a locked worktree; unlock it with `git worktree unlock` first.

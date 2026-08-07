@@ -2,9 +2,12 @@ use anyhow::{Context, Result};
 use git2::Repository;
 use std::io::IsTerminal;
 
+use clap::ColorChoice;
+use owo_colors::OwoColorize;
+
 use crate::repo;
 
-pub fn run(verbose: bool, color_flag: &str) -> Result<()> {
+pub fn run(verbose: bool, color_flag: ColorChoice) -> Result<()> {
     let repo = repo::open_repo_from_cwd()?;
     let base = repo::base_dir(&repo);
     let use_color = color_enabled(&repo, color_flag);
@@ -24,16 +27,8 @@ pub fn run(verbose: bool, color_flag: &str) -> Result<()> {
     if !repo.is_bare() {
         if let Some(workdir) = repo.workdir() {
             if let Ok(wt_repo) = Repository::open(workdir) {
-                let name = wt_repo
-                    .head()
-                    .ok()
-                    .and_then(|h| h.shorthand().ok().map(|s| s.to_string()))
-                    .unwrap_or_else(|| "(unknown)".to_string());
-                let path = workdir
-                    .strip_prefix(base)
-                    .ok()
-                    .map(|p| format!("{}/", p.display()))
-                    .unwrap_or_else(|| format!("{}/", name));
+                let name = checkout_name(&wt_repo, "(unknown)");
+                let path = rel_path(base, workdir, &name);
                 entries.push(Entry {
                     name,
                     path,
@@ -51,16 +46,8 @@ pub fn run(verbose: bool, color_flag: &str) -> Result<()> {
         if let Ok(wt) = repo.find_worktree(wt_name) {
             if let Ok(wt_repo) = Repository::open_from_worktree(&wt) {
                 // Use branch name from HEAD (may differ from worktree name, e.g. feat/test → feat-test)
-                let name = wt_repo
-                    .head()
-                    .ok()
-                    .and_then(|h| h.shorthand().ok().map(|s| s.to_string()))
-                    .unwrap_or_else(|| wt_name.to_string());
-                let path = wt.path()
-                    .strip_prefix(base)
-                    .ok()
-                    .map(|p| format!("{}/", p.display()))
-                    .unwrap_or_else(|| format!("{}/", wt_name));
+                let name = checkout_name(&wt_repo, wt_name);
+                let path = rel_path(base, wt.path(), wt_name);
                 entries.push(Entry {
                     name,
                     path,
@@ -80,31 +67,23 @@ pub fn run(verbose: bool, color_flag: &str) -> Result<()> {
     });
 
     // Compute max branch name width for column alignment
-    let max_name_width = entries
-        .iter()
-        .map(|e| e.name.len())
-        .max()
-        .unwrap_or(0);
-
-    let tty = std::io::stdout().is_terminal();
+    let max_name_width = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
 
     for entry in &entries {
         let is_current = current_branch.as_deref() == Some(&entry.name);
-        let marker = color(
-            if is_current { "*" } else { " " },
-            Color::Green,
-            use_color,
-            tty,
-        );
+        let marker = color(if is_current { "*" } else { " " }, Color::Green, use_color);
         let branch = color(
             &format!("{:<width$}", entry.name, width = max_name_width),
-            if is_current { Color::Green } else { Color::None },
+            if is_current {
+                Color::Green
+            } else {
+                Color::None
+            },
             use_color,
-            tty,
         );
 
         let (sha, message) = head_info(&entry.repo);
-        let short_sha = color(&short_sha_str(&entry.repo, &sha), Color::Yellow, use_color, tty);
+        let short_sha = color(&short_sha_str(&entry.repo, &sha), Color::Yellow, use_color);
 
         // Format: "marker branch sha message" (space-separated, aligned)
         let mut line = format!("{} {} {} {}", marker, branch, short_sha, message);
@@ -115,7 +94,6 @@ pub fn run(verbose: bool, color_flag: &str) -> Result<()> {
                 status,
                 if dirty { Color::Red } else { Color::Green },
                 use_color,
-                tty,
             );
             line.push_str(&format!(" {} {}", entry.path, status_colored));
         }
@@ -135,37 +113,48 @@ enum Color {
     Yellow,
 }
 
-fn color(text: &str, c: Color, enabled: bool, _tty: bool) -> String {
+fn color(text: &str, c: Color, enabled: bool) -> String {
     if !enabled {
         return text.to_string();
     }
-    let code = match c {
-        Color::None => return text.to_string(),
-        Color::Green => "32",
-        Color::Red => "31",
-        Color::Yellow => "33",
-    };
-    format!("\x1b[{}m{}\x1b[m", code, text)
+    match c {
+        Color::None => text.to_string(),
+        Color::Green => text.green().to_string(),
+        Color::Red => text.red().to_string(),
+        Color::Yellow => text.yellow().to_string(),
+    }
 }
 
-fn color_enabled(repo: &Repository, flag: &str) -> bool {
+fn color_enabled(repo: &Repository, flag: ColorChoice) -> bool {
     match flag {
-        "always" => true,
-        "never" => false,
-        _ => {
+        ColorChoice::Always => true,
+        ColorChoice::Never => false,
+        ColorChoice::Auto => {
             let config_val = repo
                 .config()
                 .ok()
                 .and_then(|c| c.get_bool("color.wt").ok())
-                .or_else(|| {
-                    repo.config()
-                        .ok()
-                        .and_then(|c| c.get_bool("color.ui").ok())
-                });
+                .or_else(|| repo.config().ok().and_then(|c| c.get_bool("color.ui").ok()));
             let auto = config_val.unwrap_or(true);
             auto && std::io::stdout().is_terminal()
         }
     }
+}
+
+/// Branch name from a checkout's HEAD, falling back when unborn or detached.
+fn checkout_name(repo: &Repository, fallback: &str) -> String {
+    repo.head()
+        .ok()
+        .and_then(|h| h.shorthand().ok().map(|s| s.to_string()))
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// Checkout path relative to the layout base, for the path column.
+fn rel_path(base: &std::path::Path, full: &std::path::Path, fallback: &str) -> String {
+    full.strip_prefix(base)
+        .ok()
+        .map(|p| format!("{}/", p.display()))
+        .unwrap_or_else(|| format!("{}/", fallback))
 }
 
 /// Detect which branch (if any) the user is currently standing inside.

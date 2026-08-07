@@ -27,12 +27,24 @@ pub fn run(branch: &str, force: bool) -> Result<()> {
         .find_worktree(&wt_name)
         .with_context(|| format!("no worktree for branch '{}'", branch))?;
 
-    // 3. Determine default branch for merge check
+    // 3. Refuse unclean worktrees unless forced, like `git worktree remove`
+    if !force {
+        let wt_repo = git2::Repository::open_from_worktree(&wt)?;
+        if repo::is_working_tree_dirty(&wt_repo) {
+            bail!(
+                "worktree for branch '{}' contains modified or untracked files — \
+                 commit or stash them first, or use -f to force removal",
+                branch
+            );
+        }
+    }
+
+    // 4. Determine default branch for merge check
     let default_branch = repo::cached_default_branch(&repo)
         .or_else(|_| repo::default_branch_local(&repo))
         .context("cannot determine default branch for merge check")?;
 
-    // 4. Check merge status
+    // 5. Check merge status
     let branch_ref = repo
         .find_branch(branch, BranchType::Local)
         .with_context(|| format!("branch '{}' not found", branch))?;
@@ -66,17 +78,21 @@ pub fn run(branch: &str, force: bool) -> Result<()> {
             branch, default_branch, ahead
         );
         eprintln!("If you are sure, use: git wt rm -f {}", branch);
-        bail!("branch '{}' is not fully merged into '{}'", branch, default_branch);
+        bail!(
+            "branch '{}' is not fully merged into '{}'",
+            branch,
+            default_branch
+        );
     }
 
-    // 5. Prune worktree (removes metadata + working tree directory)
+    // 6. Prune worktree (removes metadata + working tree directory)
     let mut prune_opts = git2::WorktreePruneOptions::new();
     prune_opts.valid(true);
     prune_opts.working_tree(true);
     wt.prune(Some(&mut prune_opts))
         .with_context(|| format!("failed to remove worktree '{}'", branch))?;
 
-    // 6. Delete the local branch
+    // 7. Delete the local branch
     let mut branch_obj = repo
         .find_branch(branch, BranchType::Local)
         .with_context(|| format!("branch '{}' not found for deletion", branch))?;

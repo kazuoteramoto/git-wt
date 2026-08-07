@@ -29,11 +29,15 @@ pub fn run() -> Result<()> {
 
     // Guard: core.worktree not already set (already converted)
     // Canonicalize both paths — on macOS /tmp is a symlink to /private/tmp
-    let workdir_matches = repo.workdir().map(|w| {
-        std::fs::canonicalize(w).ok() == std::fs::canonicalize(&cwd).ok()
-    }).unwrap_or(false);
-    let has_worktree_config = repo.config().ok()
-        .and_then(|c| c.get_string("core.worktree").ok()).is_some();
+    let workdir_matches = repo
+        .workdir()
+        .map(|w| std::fs::canonicalize(w).ok() == std::fs::canonicalize(&cwd).ok())
+        .unwrap_or(false);
+    let has_worktree_config = repo
+        .config()
+        .ok()
+        .and_then(|c| c.get_string("core.worktree").ok())
+        .is_some();
     if !workdir_matches && has_worktree_config {
         bail!("this repository is already converted or has core.worktree set");
     }
@@ -44,7 +48,9 @@ pub fn run() -> Result<()> {
     }
 
     // Guard: HEAD exists (at least one commit)
-    let head = repo.head().context("no commits yet — create an initial commit first")?;
+    let head = repo
+        .head()
+        .context("no commits yet — create an initial commit first")?;
     let branch = head
         .shorthand()
         .context("HEAD does not point to a branch")?
