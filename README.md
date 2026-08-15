@@ -21,6 +21,13 @@ myproject/
 
 ## Installation
 
+### Homebrew (macOS and Linux)
+
+```bash
+brew tap kazuoteramoto/git-wt
+brew install kazuoteramoto/git-wt/git-wt
+```
+
 ### From source
 
 ```bash
